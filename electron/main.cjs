@@ -4,6 +4,10 @@ const https = require('https');
 const path = require('path');
 const XLSX = require('xlsx');
 
+const marketApiAgent = new https.Agent({
+  rejectUnauthorized: false
+});
+
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('disable-software-rasterizer');
@@ -135,6 +139,7 @@ function fetchJson(url) {
     const request = https.get(
       url,
       {
+        agent: marketApiAgent,
         headers: {
           accept: 'application/json,text/plain,*/*',
           'user-agent': 'Mozilla/5.0'

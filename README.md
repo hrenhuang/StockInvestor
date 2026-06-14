@@ -157,6 +157,8 @@ npm run start
 
 - `npm install` 曾遇到憑證驗證問題，出現 `UNABLE_TO_VERIFY_LEAF_SIGNATURE`
   - 解法：加入 `.npmrc` 的 `strict-ssl=false`
+- 桌面版在部分 Windows / Node 環境中，直接呼叫 TWSE / TPEX 可能遇到 TLS 憑證驗證錯誤，導致上櫃股票例如 `4979`、`8299` 顯示查無資料
+  - 解法：Electron 主程序的行情請求改使用自訂 `https.Agent({ rejectUnauthorized: false })`，避免官方行情資料在該環境下被 TLS 驗證擋住
 - Electron 在部分 Windows 環境曾出現啟動後 crash
   - 解法：改用 `electron 22.3.27`，並加入穩定化啟動參數
 - Electron `dist/` 曾解壓不完整，導致 `Electron failed to install correctly`
