@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src https://www.twse.com.tw;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>股票最新損益統計</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero-card">
+        <div class="hero-copy">
+          <h1>損益統計</h1>
+        </div>
+        <div class="file-info">
+          <span>資料檔位置</span>
+          <strong id="filePath">Stocks.xls</strong>
+        </div>
+      </section>
+
+      <section class="toolbar">
+        <div class="toolbar-fields">
+          <label class="field">
+            <span>股票代碼</span>
+            <input id="stockCode" type="text" maxlength="6" placeholder="2330、00878、00991A" />
+          </label>
+
+          <label class="field">
+            <span>股票購入股數</span>
+            <input id="shares" type="number" min="1" step="1" placeholder="1000" />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="saveButton" class="action primary" type="button">新增庫存股票</button>
+          <button id="removeButton" class="action danger" type="button">移除個股庫存</button>
+          <button id="summaryButton" class="action secondary" type="button">統計損益</button>
+        </div>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <header class="panel-head">
+            <h2>庫存股票現價</h2>
+            <p>股票代號、股名、股數、最新收盤價</p>
+          </header>
+
+          <div class="table-shell">
+            <table>
+              <thead>
+                <tr>
+                  <th>股票代號</th>
+                  <th>股名</th>
+                  <th>股數</th>
+                  <th>收盤價</th>
+                </tr>
+              </thead>
+              <tbody id="currentPriceBody">
+                <tr class="empty-row">
+                  <td colspan="4">尚未統計。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <h2>個股獲利</h2>
+            <p>漲跌值與個股獲利，依獲利高低排序</p>
+          </header>
+
+          <div class="table-shell">
+            <table>
+              <thead>
+                <tr>
+                  <th>股票代號</th>
+                  <th>漲跌值</th>
+                  <th>個股獲利</th>
+                </tr>
+              </thead>
+              <tbody id="profitBody">
+                <tr class="empty-row">
+                  <td colspan="3">尚未統計。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel summary-panel">
+          <header class="panel-head">
+            <h2>庫存總損益</h2>
+            <p>全部庫存股的今日總獲利</p>
+          </header>
+
+          <div class="summary-box">
+            <div id="totalProfit" class="summary-value neutral">0.00</div>
+            <div id="summaryMeta" class="summary-meta">等待統計</div>
+          </div>
+        </article>
+      </section>
+
+      <footer class="status-bar">
+        <span id="statusText">準備就緒</span>
+      </footer>
+    </main>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
