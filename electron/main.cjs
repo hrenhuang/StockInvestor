@@ -113,6 +113,16 @@ function parseClosePrice(value) {
   return parsed == null ? null : Number(parsed);
 }
 
+function getObjectValueByPatterns(row, patterns) {
+  const entries = Object.entries(row ?? {});
+  for (const [key, value] of entries) {
+    if (patterns.some((pattern) => pattern.test(key))) {
+      return value;
+    }
+  }
+  return null;
+}
+
 function formatDateToken(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -190,6 +200,17 @@ async function fetchTpexMainboardSnapshot() {
 
   if (!Array.isArray(json)) {
     throw new Error('TPEX 無法提供資料');
+  }
+
+  return json;
+}
+
+async function fetchTpexWebSnapshot() {
+  const url = 'https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&o=json';
+  const json = await fetchJson(url);
+
+  if (!json || (!Array.isArray(json.aaData) && !Array.isArray(json.mmData))) {
+    throw new Error('TPEX 網頁版資料異常');
   }
 
   return json;
@@ -279,14 +300,33 @@ function extractTwseQuotes(snapshot) {
 function extractTpexQuotes(snapshot) {
   return snapshot
     .map((row) => {
-      const stockCode = normalizeStockCode(row.SecuritiesCompanyCode);
-      const stockName = String(row.CompanyName ?? '').trim();
-      const closePrice = parseClosePrice(row.Close);
-      const rawChangeText = String(row.Change ?? '').trim();
+      const stockCode = normalizeStockCode(
+        row.SecuritiesCompanyCode ??
+        row.StockCode ??
+        getObjectValueByPatterns(row, [/代號/, /Code/i])
+      );
+      const stockName = String(
+        row.CompanyName ??
+        row.CompanyShortName ??
+        row.StockName ??
+        getObjectValueByPatterns(row, [/名稱/, /Name/i]) ??
+        ''
+      ).trim();
+      const closePrice = parseClosePrice(
+        row.Close ??
+        row.ClosePrice ??
+        getObjectValueByPatterns(row, [/收盤/, /Close/i])
+      );
+      const rawChangeText = String(
+        row.Change ??
+        row.PriceChange ??
+        getObjectValueByPatterns(row, [/漲跌/, /Change/i]) ??
+        ''
+      ).trim();
       const change = parseQuoteNumber(rawChangeText);
       const dateText = String(row.Date ?? '').trim();
 
-      if (!isValidStockCode(stockCode) || !stockName || closePrice == null || change == null) {
+      if (!isValidStockCode(stockCode) || !stockName || closePrice == null) {
         return null;
       }
 
@@ -303,9 +343,49 @@ function extractTpexQuotes(snapshot) {
     .filter(Boolean);
 }
 
+function extractTpexWebQuotes(snapshot) {
+  const rows = Array.isArray(snapshot?.aaData) ? snapshot.aaData : Array.isArray(snapshot?.mmData) ? snapshot.mmData : [];
+
+  return rows
+    .map((row) => {
+      if (!Array.isArray(row) || row.length < 3) {
+        return null;
+      }
+
+      const stockCode = normalizeStockCode(row[0]);
+      const stockName = String(row[1] ?? '').trim();
+      const closePrice = parseClosePrice(row[2]);
+      const rawChangeText = `${String(row[3] ?? '').replace(/<[^>]*>/g, '').trim()}${String(row[4] ?? '').trim()}`;
+      const change = parseQuoteNumber(rawChangeText || row[4]);
+
+      if (!isValidStockCode(stockCode) || !stockName || closePrice == null) {
+        return null;
+      }
+
+      return {
+        stockCode,
+        stockName,
+        closePrice,
+        change,
+        rawChangeText,
+        source: 'TPEX_WEB'
+      };
+    })
+    .filter(Boolean);
+}
+
 async function fetchLatestMarketQuotes() {
-  const mergedRows = [];
+  const quoteMap = new Map();
   let tradingDate = null;
+
+  const mergeRows = (rows) => {
+    for (const row of rows) {
+      const existing = quoteMap.get(row.stockCode);
+      if (!existing || existing.change == null) {
+        quoteMap.set(row.stockCode, row);
+      }
+    }
+  };
 
   try {
     const snapshot = await fetchStockDayAllSnapshot();
@@ -313,7 +393,7 @@ async function fetchLatestMarketQuotes() {
 
     if (rows.length > 0) {
       tradingDate = snapshot.date || tradingDate;
-      mergedRows.push(...rows);
+      mergeRows(rows);
     }
   } catch (error) {
     // Fall back to MI_INDEX if STOCK_DAY_ALL is unavailable.
@@ -325,11 +405,24 @@ async function fetchLatestMarketQuotes() {
 
     if (rows.length > 0) {
       tradingDate = tradingDate || rows[0].dateText || null;
-      mergedRows.push(...rows);
+      mergeRows(rows);
     }
   } catch (error) {
     // TPEX may be temporarily unavailable; keep TWSE quotes if present.
   }
+
+  try {
+    const snapshot = await fetchTpexWebSnapshot();
+    const rows = extractTpexWebQuotes(snapshot);
+
+    if (rows.length > 0) {
+      mergeRows(rows);
+    }
+  } catch (error) {
+    // TPEX web fallback may be unavailable.
+  }
+
+  const mergedRows = Array.from(quoteMap.values());
 
   if (mergedRows.length > 0) {
     return {
