@@ -53,6 +53,30 @@ function toTradingDateFromTimestamp(timestamp) {
   return new Date(timestamp * 1000).toISOString().slice(0, 10);
 }
 
+function getLastTwoValidCloses(result) {
+  const closes = result?.indicators?.quote?.[0]?.close;
+  if (!Array.isArray(closes)) {
+    return { previousClose: null, latestClose: null };
+  }
+
+  const valid = closes
+    .map((value) => parseYahooNumber(value))
+    .filter((value) => value != null);
+
+  if (valid.length === 0) {
+    return { previousClose: null, latestClose: null };
+  }
+
+  if (valid.length === 1) {
+    return { previousClose: null, latestClose: valid[0] };
+  }
+
+  return {
+    previousClose: valid[valid.length - 2],
+    latestClose: valid[valid.length - 1]
+  };
+}
+
 function buildCandidateSymbols(stockCode) {
   return [`${stockCode}.TW`, `${stockCode}.TWO`];
 }
@@ -121,12 +145,13 @@ function mapYahooChartQuote(stockCode, symbol, json) {
     return null;
   }
 
-  const closePrice = parseYahooNumber(meta.regularMarketPrice);
+  const { previousClose: closeSeriesPrevious, latestClose: closeSeriesLatest } = getLastTwoValidCloses(result);
+  const closePrice = parseYahooNumber(meta.regularMarketPrice) ?? closeSeriesLatest;
   if (closePrice == null) {
     return null;
   }
 
-  const previousClose = parseYahooNumber(meta.previousClose);
+  const previousClose = parseYahooNumber(meta.previousClose) ?? closeSeriesPrevious;
   const change = previousClose == null ? null : Number((closePrice - previousClose).toFixed(2));
   const tradingDate = toTradingDateFromTimestamp(Number(meta.regularMarketTime || 0));
 
