@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self' https://www.twse.com.tw https://www.tpex.org.tw; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src https://www.twse.com.tw https://www.tpex.org.tw;"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https:;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>損益統計</title>
@@ -16,7 +16,7 @@
         <div class="hero-copy">
           <p class="eyebrow">GitHub Pages Edition</p>
           <h1>損益統計</h1>
-          <p class="hero-note">資料儲存在目前瀏覽器的 localStorage，可匯出成 JSON 備份。</p>
+          <p class="hero-note">使用 Cloudflare Workers 代理 Yahoo 資料，庫存保存於目前瀏覽器的 localStorage。</p>
         </div>
         <div class="file-info">
           <span>資料位置</span>
@@ -55,7 +55,7 @@
         <article class="panel">
           <header class="panel-head">
             <h2>庫存股票現價</h2>
-            <p>股票代號、股名、股數、最新收盤價</p>
+            <p>股票代號、股名、股數、最新價</p>
           </header>
 
           <div class="table-shell">
@@ -65,7 +65,7 @@
                   <th>股票代號</th>
                   <th>股名</th>
                   <th>股數</th>
-                  <th>收盤價</th>
+                  <th>最新價</th>
                 </tr>
               </thead>
               <tbody id="currentPriceBody">
@@ -117,7 +117,7 @@
       <section class="diagnostics-panel">
         <header class="panel-head">
           <h2>資料來源診斷</h2>
-          <p>直接顯示 TWSE / TPEX 抓取成功或失敗原因，方便判斷 GitHub Pages 的限制。</p>
+          <p>目前 GitHub Pages 版改走 Cloudflare Workers 代理 Yahoo，這裡會直接顯示代理是否可用。</p>
         </header>
         <div class="diagnostics-grid" id="diagnosticsGrid"></div>
       </section>
@@ -127,6 +127,7 @@
       </footer>
     </main>
 
+    <script src="./config.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

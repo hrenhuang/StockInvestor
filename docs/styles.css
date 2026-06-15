@@ -305,7 +305,7 @@ tbody tr:nth-child(even) td {
 .diagnostics-grid {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -355,7 +355,7 @@ tbody tr:nth-child(even) td {
 
 @media (max-width: 1100px) {
   .diagnostics-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 }
 
@@ -391,9 +391,5 @@ tbody tr:nth-child(even) td {
 
   .hero-copy h1 {
     font-size: 1.7rem;
-  }
-
-  .diagnostics-grid {
-    grid-template-columns: 1fr;
   }
 }

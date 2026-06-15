@@ -154,6 +154,16 @@ function mapYahooChartQuote(stockCode, symbol, json) {
   const previousClose = parseYahooNumber(meta.previousClose) ?? closeSeriesPrevious;
   const change = previousClose == null ? null : Number((closePrice - previousClose).toFixed(2));
   const tradingDate = toTradingDateFromTimestamp(Number(meta.regularMarketTime || 0));
+  const debug = {
+    method: 'YAHOO_V8_CHART',
+    symbol,
+    regularMarketPrice: parseYahooNumber(meta.regularMarketPrice),
+    previousCloseFromMeta: parseYahooNumber(meta.previousClose),
+    previousCloseFromSeries: closeSeriesPrevious,
+    latestCloseFromSeries: closeSeriesLatest,
+    computedClosePrice: closePrice,
+    computedChange: change
+  };
 
   return {
     item: {
@@ -164,7 +174,8 @@ function mapYahooChartQuote(stockCode, symbol, json) {
       closePrice,
       change,
       source: 'YAHOO_WORKER_CHART',
-      marketSymbol: symbol
+      marketSymbol: symbol,
+      debug
     },
     tradingDate
   };

@@ -19,4 +19,5 @@ temp/
 *.tmp
 *.bak
 *.swp
+.wrangler/
 AGENTS.md

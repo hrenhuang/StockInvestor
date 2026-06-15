@@ -1,4 +1,6 @@
 const STORAGE_KEY = 'stockinvestor-stocks-v1';
+const CONFIG = window.STOCKINVESTOR_CONFIG || {};
+const PROXY_URL = String(CONFIG.quoteProxyUrl || '').trim();
 
 const stockCodeInput = document.getElementById('stockCode');
 const sharesInput = document.getElementById('shares');
@@ -16,10 +18,9 @@ const statusTextEl = document.getElementById('statusText');
 const diagnosticsGridEl = document.getElementById('diagnosticsGrid');
 
 const diagnosticsState = {
-  twseStockDayAll: { label: 'TWSE 全市場', status: 'neutral', detail: '尚未發出請求。' },
-  tpexOpenApi: { label: 'TPEX OpenAPI', status: 'neutral', detail: '尚未發出請求。' },
-  tpexWeb: { label: 'TPEX 網頁備援', status: 'neutral', detail: '尚未發出請求。' },
-  twseFallback: { label: 'TWSE 回補', status: 'neutral', detail: '尚未發出請求。' }
+  proxyConfig: { label: 'Proxy 設定', status: 'neutral', detail: '尚未檢查。' },
+  workerFetch: { label: 'Cloudflare Worker', status: 'neutral', detail: '尚未發出請求。' },
+  yahooResult: { label: 'Yahoo 回傳', status: 'neutral', detail: '尚未發出請求。' }
 };
 
 function normalizeStockCode(value) {
@@ -77,10 +78,7 @@ function summarizeError(error) {
 
   const message = String(error.message || error);
   if (/Failed to fetch/i.test(message)) {
-    return '瀏覽器無法連線，可能是 CORS、憑證或遠端拒絕連線。';
-  }
-  if (/NetworkError/i.test(message)) {
-    return '瀏覽器網路層阻擋了這次請求。';
+    return '瀏覽器無法連到 Worker，請檢查 URL、CORS、Worker 是否已部署。';
   }
   return message;
 }
@@ -93,7 +91,7 @@ function diagnosticStatusText(status) {
     return '失敗';
   }
   if (status === 'warn') {
-    return '略過';
+    return '提醒';
   }
   return '等待統計';
 }
@@ -126,7 +124,7 @@ function resetDiagnostics() {
     diagnosticsState[key] = {
       ...diagnosticsState[key],
       status: 'neutral',
-      detail: '尚未發出請求。'
+      detail: key === 'proxyConfig' ? '尚未檢查。' : '尚未發出請求。'
     };
   });
   renderDiagnostics();
@@ -172,384 +170,35 @@ function writeStocks(rows) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
 }
 
-function parseQuoteNumber(value) {
-  if (value == null) {
-    return null;
+function getProxyEndpoint(codes) {
+  const baseUrl = PROXY_URL.replace(/\/+$/, '');
+  return `${baseUrl}?codes=${encodeURIComponent(codes.join(','))}`;
+}
+
+async function fetchProxyQuotes(codes) {
+  if (!PROXY_URL || PROXY_URL.includes('your-stockinvestor-proxy')) {
+    setDiagnostic('proxyConfig', 'error', 'docs/config.js 尚未填入真正的 Cloudflare Worker URL。');
+    throw new Error('請先在 docs/config.js 設定 Cloudflare Worker URL');
   }
 
-  const normalized = String(value).trim().replace(/,/g, '');
-  if (!normalized || normalized === '--' || normalized === '---') {
-    return null;
-  }
+  setDiagnostic('proxyConfig', 'ok', `目前使用：${PROXY_URL}`);
 
-  const matched = normalized.match(/[+-]?\d+(?:\.\d+)?/);
-  return matched ? Number(matched[0]) : null;
-}
-
-function parseClosePrice(value) {
-  const parsed = parseQuoteNumber(value);
-  return parsed == null ? null : Number(parsed);
-}
-
-function getObjectValueByPatterns(row, patterns) {
-  const entries = Object.entries(row ?? {});
-  for (const [key, value] of entries) {
-    if (patterns.some((pattern) => pattern.test(key))) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function formatDateToken(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}${month}${day}`;
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url, {
+  const response = await fetch(getProxyEndpoint(codes), {
     headers: {
       accept: 'application/json,text/plain,*/*'
     }
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(`Worker HTTP ${response.status}`);
   }
 
-  return response.json();
-}
-
-async function fetchTwseSnapshotForDate(dateToken) {
-  const url = `https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=${dateToken}&type=ALLBUT0999&response=json`;
-  const json = await fetchJson(url);
-
-  if (!json || json.stat !== 'OK') {
-    throw new Error(json?.stat || 'TWSE 回傳資料異常');
+  const json = await response.json();
+  if (!json || !json.ok) {
+    throw new Error(json?.message || 'Worker 回傳失敗');
   }
 
   return json;
-}
-
-async function fetchStockDayAllSnapshot() {
-  const url = 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json';
-  const json = await fetchJson(url);
-
-  if (!json || json.stat !== 'OK') {
-    throw new Error(json?.stat || 'TWSE 回傳資料異常');
-  }
-
-  return json;
-}
-
-async function fetchTpexMainboardSnapshot() {
-  const url = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes';
-  const json = await fetchJson(url);
-
-  if (!Array.isArray(json)) {
-    throw new Error('TPEX OpenAPI 回傳資料異常');
-  }
-
-  return json;
-}
-
-async function fetchTpexWebSnapshot() {
-  const url = 'https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&o=json';
-  const json = await fetchJson(url);
-
-  if (!json || (!Array.isArray(json.aaData) && !Array.isArray(json.mmData))) {
-    throw new Error('TPEX 網頁版資料異常');
-  }
-
-  return json;
-}
-
-function extractStockDayAllQuotes(snapshot) {
-  const fields = Array.isArray(snapshot?.fields) ? snapshot.fields : [];
-  const data = Array.isArray(snapshot?.data) ? snapshot.data : [];
-  const codeIndex = fields.findIndex((field) => /證券代號|股票代號|代號/.test(field));
-  const nameIndex = fields.findIndex((field) => /證券名稱|股票名稱|名稱/.test(field));
-  const closeIndex = fields.findIndex((field) => /收盤價/.test(field));
-  const changeIndex = fields.findIndex((field) => /漲跌價差|漲跌/.test(field));
-
-  if (codeIndex < 0 || nameIndex < 0 || closeIndex < 0 || changeIndex < 0) {
-    return [];
-  }
-
-  return data
-    .map((row) => {
-      const stockCode = normalizeStockCode(row[codeIndex]);
-      const stockName = String(row[nameIndex] ?? '').trim();
-      const closePrice = parseClosePrice(row[closeIndex]);
-      const rawChangeText = String(row[changeIndex] ?? '').trim();
-      const change = parseQuoteNumber(rawChangeText);
-
-      if (!isValidStockCode(stockCode) || !stockName || closePrice == null || change == null) {
-        return null;
-      }
-
-      return {
-        stockCode,
-        stockName,
-        closePrice,
-        change,
-        rawChangeText
-      };
-    })
-    .filter(Boolean);
-}
-
-function extractTwseQuotes(snapshot) {
-  const tables = Array.isArray(snapshot?.tables) ? snapshot.tables : [];
-  let bestRows = [];
-
-  for (const table of tables) {
-    const fields = Array.isArray(table.fields) ? table.fields : [];
-    const codeIndex = fields.findIndex((field) => /證券代號|股票代號|代號/.test(field));
-    const nameIndex = fields.findIndex((field) => /證券名稱|股票名稱|名稱/.test(field));
-    const closeIndex = fields.findIndex((field) => /收盤價/.test(field));
-    const changeIndex = fields.findIndex((field) => /漲跌價差|漲跌/.test(field));
-
-    if (codeIndex < 0 || nameIndex < 0 || closeIndex < 0 || changeIndex < 0) {
-      continue;
-    }
-
-    const data = Array.isArray(table.data) ? table.data : [];
-    const rows = data
-      .map((row) => {
-        const stockCode = normalizeStockCode(row[codeIndex]);
-        const stockName = String(row[nameIndex] ?? '').trim();
-        const closePrice = parseClosePrice(row[closeIndex]);
-        const changePrefix = String(row[changeIndex - 1] ?? '').replace(/<[^>]*>/g, '').trim();
-        const rawChangeText = `${changePrefix}${String(row[changeIndex] ?? '').trim()}`;
-        const change = parseQuoteNumber(rawChangeText || row[changeIndex]);
-
-        if (!isValidStockCode(stockCode) || !stockName || closePrice == null || change == null) {
-          return null;
-        }
-
-        return {
-          stockCode,
-          stockName,
-          closePrice,
-          change,
-          rawChangeText
-        };
-      })
-      .filter(Boolean);
-
-    if (rows.length > bestRows.length) {
-      bestRows = rows;
-    }
-  }
-
-  return bestRows;
-}
-
-function extractTpexQuotes(snapshot) {
-  return snapshot
-    .map((row) => {
-      const stockCode = normalizeStockCode(
-        row.SecuritiesCompanyCode ??
-        row.StockCode ??
-        getObjectValueByPatterns(row, [/代號/, /Code/i])
-      );
-      const stockName = String(
-        row.CompanyName ??
-        row.CompanyShortName ??
-        row.StockName ??
-        getObjectValueByPatterns(row, [/名稱/, /Name/i]) ??
-        ''
-      ).trim();
-      const closePrice = parseClosePrice(
-        row.Close ??
-        row.ClosePrice ??
-        getObjectValueByPatterns(row, [/收盤/, /Close/i])
-      );
-      const rawChangeText = String(
-        row.Change ??
-        row.PriceChange ??
-        getObjectValueByPatterns(row, [/漲跌/, /Change/i]) ??
-        ''
-      ).trim();
-      const change = parseQuoteNumber(rawChangeText);
-      const dateText = String(row.Date ?? '').trim();
-
-      if (!isValidStockCode(stockCode) || !stockName || closePrice == null) {
-        return null;
-      }
-
-      return {
-        stockCode,
-        stockName,
-        closePrice,
-        change,
-        rawChangeText,
-        dateText
-      };
-    })
-    .filter(Boolean);
-}
-
-function extractTpexWebQuotes(snapshot) {
-  const rows = Array.isArray(snapshot?.aaData) ? snapshot.aaData : Array.isArray(snapshot?.mmData) ? snapshot.mmData : [];
-
-  return rows
-    .map((row) => {
-      if (!Array.isArray(row) || row.length < 3) {
-        return null;
-      }
-
-      const stockCode = normalizeStockCode(row[0]);
-      const stockName = String(row[1] ?? '').trim();
-      const closePrice = parseClosePrice(row[2]);
-      const rawChangeText = `${String(row[3] ?? '').replace(/<[^>]*>/g, '').trim()}${String(row[4] ?? '').trim()}`;
-      const change = parseQuoteNumber(rawChangeText || row[4]);
-
-      if (!isValidStockCode(stockCode) || !stockName || closePrice == null) {
-        return null;
-      }
-
-      return {
-        stockCode,
-        stockName,
-        closePrice,
-        change,
-        rawChangeText
-      };
-    })
-    .filter(Boolean);
-}
-
-async function fetchLatestTwseQuotes() {
-  const fallbackRows = [];
-  let fallbackTradingDate = null;
-
-  const today = new Date();
-  let lastError = null;
-
-  for (let offset = 0; offset < 15; offset += 1) {
-    const probeDate = new Date(today);
-    probeDate.setDate(today.getDate() - offset);
-
-    try {
-      const dateToken = formatDateToken(probeDate);
-      const snapshot = await fetchTwseSnapshotForDate(dateToken);
-      const rows = extractTwseQuotes(snapshot);
-
-      if (rows.length > 0) {
-        fallbackTradingDate = dateToken;
-        fallbackRows.push(...rows);
-        setDiagnostic('twseFallback', 'ok', `成功取得 ${rows.length} 筆資料，日期 ${dateToken}。`);
-        break;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  if (fallbackRows.length > 0) {
-    return {
-      tradingDate: fallbackTradingDate,
-      rows: fallbackRows
-    };
-  }
-
-  setDiagnostic('twseFallback', 'error', summarizeError(lastError || '無法取得最新股價資料'));
-  throw lastError || new Error('無法取得最新股價資料');
-}
-
-async function fetchLatestMarketQuotes() {
-  const quoteMap = new Map();
-  let tradingDate = null;
-
-  const mergeRows = (rows) => {
-    for (const row of rows) {
-      const existing = quoteMap.get(row.stockCode);
-      if (!existing || existing.change == null) {
-        quoteMap.set(row.stockCode, row);
-      }
-    }
-  };
-
-  try {
-    const snapshot = await fetchStockDayAllSnapshot();
-    const rows = extractStockDayAllQuotes(snapshot);
-
-    if (rows.length > 0) {
-      tradingDate = snapshot.date || tradingDate;
-      mergeRows(rows);
-      setDiagnostic('twseStockDayAll', 'ok', `成功取得 ${rows.length} 筆資料，日期 ${snapshot.date || '未知'}。`);
-    } else {
-      setDiagnostic('twseStockDayAll', 'warn', '請求成功，但沒有解析出有效資料。');
-    }
-  } catch (error) {
-    setDiagnostic('twseStockDayAll', 'error', summarizeError(error));
-  }
-
-  try {
-    const snapshot = await fetchTpexMainboardSnapshot();
-    const rows = extractTpexQuotes(snapshot);
-
-    if (rows.length > 0) {
-      tradingDate = tradingDate || rows[0].dateText || null;
-      mergeRows(rows);
-      setDiagnostic('tpexOpenApi', 'ok', `成功取得 ${rows.length} 筆資料。`);
-    } else {
-      setDiagnostic('tpexOpenApi', 'warn', '請求成功，但沒有解析出有效資料。');
-    }
-  } catch (error) {
-    setDiagnostic('tpexOpenApi', 'error', summarizeError(error));
-  }
-
-  try {
-    const snapshot = await fetchTpexWebSnapshot();
-    const rows = extractTpexWebQuotes(snapshot);
-
-    if (rows.length > 0) {
-      mergeRows(rows);
-      setDiagnostic('tpexWeb', 'ok', `成功取得 ${rows.length} 筆資料。`);
-    } else {
-      setDiagnostic('tpexWeb', 'warn', '請求成功，但目前回傳 0 筆資料。');
-    }
-  } catch (error) {
-    setDiagnostic('tpexWeb', 'error', summarizeError(error));
-  }
-
-  const mergedRows = Array.from(quoteMap.values());
-
-  if (mergedRows.length > 0) {
-    if (diagnosticsState.twseFallback.status === 'neutral') {
-      setDiagnostic('twseFallback', 'warn', '前面資料源已取得足夠資料，未啟用 TWSE 回補。');
-    }
-    return {
-      tradingDate,
-      rows: mergedRows
-    };
-  }
-
-  return fetchLatestTwseQuotes();
-}
-
-async function fetchRecentCloseDifference(stockCode, tradingDate) {
-  const url = `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=${tradingDate || formatDateToken(new Date())}&stockNo=${stockCode}&response=json`;
-  const json = await fetchJson(url);
-
-  if (!json || json.stat !== 'OK' || !Array.isArray(json.data) || json.data.length < 2) {
-    return null;
-  }
-
-  const rows = json.data.slice(-2);
-  const previousClose = parseClosePrice(rows[0][6]);
-  const currentClose = parseClosePrice(rows[1][6]);
-
-  if (previousClose == null || currentClose == null) {
-    return null;
-  }
-
-  return Number((currentClose - previousClose).toFixed(2));
 }
 
 async function calculateSummary() {
@@ -564,51 +213,51 @@ async function calculateSummary() {
     };
   }
 
-  const snapshot = await fetchLatestMarketQuotes();
-  const quoteMap = new Map(snapshot.rows.map((row) => [row.stockCode, row]));
-  const specialChangeCache = new Map();
+  const codes = stocks.map((stock) => stock.stockCode);
+  const quoteResult = await fetchProxyQuotes(codes);
 
-  const items = await Promise.all(
-    stocks.map(async (stock) => {
-      const quote = quoteMap.get(stock.stockCode);
+  setDiagnostic('workerFetch', 'ok', `Worker 成功回傳 ${quoteResult.items.length} 筆資料。`);
 
-      if (!quote) {
-        return {
-          stockCode: stock.stockCode,
-          stockName: '查無資料',
-          shares: stock.shares,
-          closePrice: null,
-          change: null,
-          profit: null
-        };
-      }
+  if (quoteResult.provider) {
+    setDiagnostic('yahooResult', 'ok', `目前使用 ${quoteResult.provider}。`);
+  }
 
-      let change = quote.change;
+  if (Array.isArray(quoteResult.missingCodes) && quoteResult.missingCodes.length > 0) {
+    setDiagnostic(
+      'yahooResult',
+      'warn',
+      `${quoteResult.provider || 'Yahoo'} 未回傳：${quoteResult.missingCodes.join(', ')}`
+    );
+  } else if (!quoteResult.provider) {
+    setDiagnostic('yahooResult', 'ok', 'Yahoo 已回傳全部查詢股票資料。');
+  }
 
-      if (typeof quote.rawChangeText === 'string' && /^X/i.test(quote.rawChangeText)) {
-        if (!specialChangeCache.has(stock.stockCode)) {
-          specialChangeCache.set(
-            stock.stockCode,
-            fetchRecentCloseDifference(stock.stockCode, snapshot.tradingDate).catch(() => null)
-          );
-        }
+  const quoteMap = new Map((quoteResult.items || []).map((row) => [row.stockCode, row]));
 
-        const inferredChange = await specialChangeCache.get(stock.stockCode);
-        if (inferredChange != null) {
-          change = inferredChange;
-        }
-      }
-
+  const items = stocks.map((stock) => {
+    const quote = quoteMap.get(stock.stockCode);
+    if (!quote) {
       return {
         stockCode: stock.stockCode,
-        stockName: quote.stockName,
+        stockName: '查無資料',
         shares: stock.shares,
-        closePrice: quote.closePrice,
-        change,
-        profit: Number(((change ?? 0) * stock.shares).toFixed(2))
+        closePrice: null,
+        change: null,
+        profit: null
       };
-    })
-  );
+    }
+
+    const change = Number.isFinite(Number(quote.change)) ? Number(quote.change) : null;
+
+    return {
+      stockCode: stock.stockCode,
+      stockName: quote.stockName,
+      shares: stock.shares,
+      closePrice: Number(quote.closePrice),
+      change,
+      profit: change == null ? null : Number((change * stock.shares).toFixed(2))
+    };
+  });
 
   items.sort((left, right) => {
     const leftProfit = left.profit ?? Number.NEGATIVE_INFINITY;
@@ -629,8 +278,8 @@ async function calculateSummary() {
   return {
     items,
     totalProfit,
-    tradingDate: snapshot.tradingDate,
-    message: `已完成 ${snapshot.tradingDate || '最新'} 資料統計`
+    tradingDate: quoteResult.tradingDate,
+    message: `已完成 ${quoteResult.tradingDate || '最新'} 資料統計`
   };
 }
 
@@ -680,12 +329,13 @@ function renderSummary(result) {
 
 async function refreshSummary() {
   resetDiagnostics();
-  setStatus('正在讀取最新股價並統計...');
+  setStatus('正在透過 Cloudflare Worker 讀取 Yahoo 資料...');
 
   try {
     const summaryResult = await calculateSummary();
     renderSummary({ ok: true, ...summaryResult });
   } catch (error) {
+    setDiagnostic('workerFetch', 'error', summarizeError(error));
     setStatus(error?.message || '統計失敗，請稍後再試');
   }
 }
