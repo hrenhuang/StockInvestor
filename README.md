@@ -59,15 +59,16 @@ GitHub Pages 是純靜態網站，不適合直接讀寫本機 `Stocks.xls`，因
 - 改用瀏覽器 `localStorage` 保存庫存資料
 - 提供 `匯出資料`，可下載 `Stocks.json`
 - 提供 `匯入資料`，可重新載回 `Stocks.json`
+- 新增 `資料來源診斷` 區塊，可直接顯示 TWSE / TPEX 抓取成功或失敗原因
 - 仍保留即時統計損益功能
 
 ### 部署方式
 
 1. 將專案推到 GitHub
-2. 到 GitHub Repository Settings
+2. 到 GitHub Repository `Settings`
 3. 找到 `Pages`
 4. Source 選擇 `Deploy from a branch`
-5. Branch 選擇你的主分支，例如 `main`
+5. Branch 選擇主分支，例如 `main`
 6. Folder 選擇 `/docs`
 
 部署後，GitHub Pages 會直接使用：
@@ -79,7 +80,7 @@ GitHub Pages 是純靜態網站，不適合直接讀寫本機 `Stocks.xls`，因
 - GitHub Pages 版資料只存在當前瀏覽器
 - 換電腦、換瀏覽器、清除瀏覽資料後，`localStorage` 內容會消失
 - 若要長期保存，建議定期匯出 `Stocks.json`
-- 行情抓取仰賴公開資料來源，若來源暫時無法跨網域讀取，頁面會顯示統計失敗訊息
+- 行情抓取仰賴公開資料來源，若來源暫時無法跨網域讀取，頁面會在 `資料來源診斷` 顯示失敗原因
 
 ## 最小化保存建議
 
@@ -158,14 +159,14 @@ npm run start
 - `npm install` 曾遇到憑證驗證問題，出現 `UNABLE_TO_VERIFY_LEAF_SIGNATURE`
   - 解法：加入 `.npmrc` 的 `strict-ssl=false`
 - 桌面版在部分 Windows / Node 環境中，直接呼叫 TWSE / TPEX 可能遇到 TLS 憑證驗證錯誤，導致上櫃股票例如 `4979`、`8299` 顯示查無資料
-  - 解法：Electron 主程序的行情請求改使用自訂 `https.Agent({ rejectUnauthorized: false })`，避免官方行情資料在該環境下被 TLS 驗證擋住
+  - 解法：Electron 主程序的行情請求改使用自訂 `https.Agent({ rejectUnauthorized: false })`
 - Electron 在部分 Windows 環境曾出現啟動後 crash
   - 解法：改用 `electron 22.3.27`，並加入穩定化啟動參數
 - Electron `dist/` 曾解壓不完整，導致 `Electron failed to install correctly`
   - 解法：新增 [electron/ensure-electron-dist.cjs](/d:/AI_WorkSpace/StockInvestor/electron/ensure-electron-dist.cjs)，於 `postinstall`、`prestart`、`predev` 自動修復 `dist-fixed`
 - portable `.exe` 一度誤抓暫存目錄內的 `Stocks.xls`
   - 解法：優先使用 `PORTABLE_EXECUTABLE_DIR`，讓 portable 模式固定讀取 `.exe` 同目錄的 `Stocks.xls`
-- 上櫃股票例如 `8299` 曾出現查無資料
-  - 解法：同時整合上市、上櫃 OpenAPI 與 TPEX 網頁版備援來源，並放寬上櫃欄位解析條件，避免特定股票因欄位格式差異被判成查無資料
+- 上櫃股票例如 `8299`、`4979` 曾出現查無資料
+  - 解法：同時整合上市、上櫃 OpenAPI 與 TPEX 網頁版備援來源，並在 GitHub Pages 版新增 `資料來源診斷` 區塊，直接顯示 TWSE / TPEX 抓取成功或失敗原因
 - `2330` 曾出現 `X0.00` 導致漲跌值判斷錯誤
   - 解法：額外抓取最近交易資料，以最新收盤價與前一日收盤價重新計算漲跌值

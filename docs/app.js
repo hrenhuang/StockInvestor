@@ -13,6 +13,14 @@ const profitBody = document.getElementById('profitBody');
 const totalProfitEl = document.getElementById('totalProfit');
 const summaryMetaEl = document.getElementById('summaryMeta');
 const statusTextEl = document.getElementById('statusText');
+const diagnosticsGridEl = document.getElementById('diagnosticsGrid');
+
+const diagnosticsState = {
+  twseStockDayAll: { label: 'TWSE 全市場', status: 'neutral', detail: '尚未發出請求。' },
+  tpexOpenApi: { label: 'TPEX OpenAPI', status: 'neutral', detail: '尚未發出請求。' },
+  tpexWeb: { label: 'TPEX 網頁備援', status: 'neutral', detail: '尚未發出請求。' },
+  twseFallback: { label: 'TWSE 回補', status: 'neutral', detail: '尚未發出請求。' }
+};
 
 function normalizeStockCode(value) {
   return String(value ?? '').trim().toUpperCase();
@@ -60,6 +68,68 @@ function getValueClass(value) {
   }
 
   return 'neutral';
+}
+
+function summarizeError(error) {
+  if (!error) {
+    return '未知錯誤';
+  }
+
+  const message = String(error.message || error);
+  if (/Failed to fetch/i.test(message)) {
+    return '瀏覽器無法連線，可能是 CORS、憑證或遠端拒絕連線。';
+  }
+  if (/NetworkError/i.test(message)) {
+    return '瀏覽器網路層阻擋了這次請求。';
+  }
+  return message;
+}
+
+function diagnosticStatusText(status) {
+  if (status === 'ok') {
+    return '成功';
+  }
+  if (status === 'error') {
+    return '失敗';
+  }
+  if (status === 'warn') {
+    return '略過';
+  }
+  return '等待統計';
+}
+
+function renderDiagnostics() {
+  diagnosticsGridEl.innerHTML = Object.values(diagnosticsState)
+    .map(
+      (item) => `
+        <article class="diag-card">
+          <h3>${item.label}</h3>
+          <p class="diag-state ${item.status}">${diagnosticStatusText(item.status)}</p>
+          <p class="diag-detail">${item.detail}</p>
+        </article>
+      `
+    )
+    .join('');
+}
+
+function setDiagnostic(key, status, detail) {
+  diagnosticsState[key] = {
+    ...diagnosticsState[key],
+    status,
+    detail
+  };
+  renderDiagnostics();
+}
+
+function resetDiagnostics() {
+  Object.keys(diagnosticsState).forEach((key) => {
+    diagnosticsState[key] = {
+      ...diagnosticsState[key],
+      status: 'neutral',
+      detail: '尚未發出請求。'
+    };
+  });
+  renderDiagnostics();
 }
 
 function renderEmptyState(message) {
@@ -179,7 +249,7 @@ async function fetchTpexMainboardSnapshot() {
   const json = await fetchJson(url);
 
   if (!Array.isArray(json)) {
-    throw new Error('TPEX 回傳資料異常');
+    throw new Error('TPEX OpenAPI 回傳資料異常');
   }
 
   return json;
@@ -347,8 +417,7 @@ function extractTpexWebQuotes(snapshot) {
         stockName,
         closePrice,
         change,
-        rawChangeText,
-        source: 'TPEX_WEB'
+        rawChangeText
       };
     })
     .filter(Boolean);
@@ -373,6 +442,7 @@ async function fetchLatestTwseQuotes() {
       if (rows.length > 0) {
         fallbackTradingDate = dateToken;
         fallbackRows.push(...rows);
+        setDiagnostic('twseFallback', 'ok', `成功取得 ${rows.length} 筆資料，日期 ${dateToken}。`);
         break;
       }
     } catch (error) {
@@ -387,6 +457,7 @@ async function fetchLatestTwseQuotes() {
     };
   }
 
+  setDiagnostic('twseFallback', 'error', summarizeError(lastError || '無法取得最新股價資料'));
   throw lastError || new Error('無法取得最新股價資料');
 }
 
@@ -410,9 +481,12 @@ async function fetchLatestMarketQuotes() {
     if (rows.length > 0) {
       tradingDate = snapshot.date || tradingDate;
       mergeRows(rows);
+      setDiagnostic('twseStockDayAll', 'ok', `成功取得 ${rows.length} 筆資料，日期 ${snapshot.date || '未知'}。`);
+    } else {
+      setDiagnostic('twseStockDayAll', 'warn', '請求成功，但沒有解析出有效資料。');
     }
   } catch (error) {
-    // Use fallback later.
+    setDiagnostic('twseStockDayAll', 'error', summarizeError(error));
   }
 
   try {
@@ -422,9 +496,12 @@ async function fetchLatestMarketQuotes() {
     if (rows.length > 0) {
       tradingDate = tradingDate || rows[0].dateText || null;
       mergeRows(rows);
+      setDiagnostic('tpexOpenApi', 'ok', `成功取得 ${rows.length} 筆資料。`);
+    } else {
+      setDiagnostic('tpexOpenApi', 'warn', '請求成功，但沒有解析出有效資料。');
     }
   } catch (error) {
-    // Keep TWSE data if available.
+    setDiagnostic('tpexOpenApi', 'error', summarizeError(error));
   }
 
   try {
@@ -433,14 +510,20 @@ async function fetchLatestMarketQuotes() {
 
     if (rows.length > 0) {
       mergeRows(rows);
+      setDiagnostic('tpexWeb', 'ok', `成功取得 ${rows.length} 筆資料。`);
+    } else {
+      setDiagnostic('tpexWeb', 'warn', '請求成功，但目前回傳 0 筆資料。');
     }
   } catch (error) {
-    // TPEX web fallback may be unavailable.
+    setDiagnostic('tpexWeb', 'error', summarizeError(error));
   }
 
   const mergedRows = Array.from(quoteMap.values());
 
   if (mergedRows.length > 0) {
+    if (diagnosticsState.twseFallback.status === 'neutral') {
+      setDiagnostic('twseFallback', 'warn', '前面資料源已取得足夠資料，未啟用 TWSE 回補。');
+    }
     return {
       tradingDate,
       rows: mergedRows
@@ -522,7 +605,7 @@ async function calculateSummary() {
         shares: stock.shares,
         closePrice: quote.closePrice,
         change,
-        profit: Number((change * stock.shares).toFixed(2))
+        profit: Number(((change ?? 0) * stock.shares).toFixed(2))
       };
     })
   );
@@ -596,6 +679,7 @@ function renderSummary(result) {
 }
 
 async function refreshSummary() {
+  resetDiagnostics();
   setStatus('正在讀取最新股價並統計...');
 
   try {
@@ -751,6 +835,7 @@ sharesInput.addEventListener('keydown', (event) => {
   }
 });
 
+renderDiagnostics();
 renderEmptyState('等待統計');
 refreshSummary().catch((error) => {
   setStatus(error?.message || '初始化失敗');
