@@ -4,6 +4,7 @@
 
 - `Electron` 桌面版：可讀寫執行目錄下的 `Stocks.xls`
 - `GitHub Pages` 靜態版：部署在 `docs/`，改用瀏覽器 `localStorage` 保存資料，股價透過 `Cloudflare Workers + Yahoo` 代理取得
+- 股名不使用固定寫死對照表，改採多來源動態抓取
 
 ## 功能
 
@@ -220,6 +221,14 @@ npm run start
   - 解法：Worker 先試 `v7/finance/quote`，若收到 `401`，自動 fallback 到 `v8/finance/chart`
 - Yahoo `v8/finance/chart` 備援模式有時只給最新價，未直接附上漲跌值
   - 解法：Worker 會改用最近兩個有效收盤價自動回推 `change`
+- Yahoo 回傳股名通常是英文
+  - 解法：Worker 會另外抓 TWSE / TPEX 官方資料來源，優先用官方中文股名覆蓋 Yahoo 的英文名稱
+- 若個別股票未出現在 TWSE / TPEX 中文名稱表，仍可能顯示英文
+  - 解法：Worker 會先嘗試台股即時資訊介面的中文股名，再以 `tw.stock.yahoo.com/quote/<marketSymbol>` 作為最後一層中文股名補抓來源，例如 `4749.TWO`
+- 不希望固定寫死股名
+  - 解法：專案不維護 `2330 -> 台積電`、`4979 -> 華星光` 這類硬編碼股名表；只依序使用 `TWSE / TPEX 官方資料`、`MIS 台股即時資訊`、`Yahoo 台股頁面` 動態判讀，若都失敗才保留來源原始名稱或顯示查無資料
+- Yahoo 台股頁面的標題可能先出現通用字樣，例如 `Yahoo股市`
+  - 解法：Worker 會排除 `Yahoo股市` / `Yahoo奇摩股市` 等通用名稱，避免誤把網站名稱當成股票中文名
 - 若需要精準判讀 Yahoo `v8/finance/chart` 算出的 `change` 是否正確
   - 解法：Worker 回傳的每筆 item 內會附帶 `debug` 欄位，可直接看到 `previousCloseFromMeta`、`previousCloseFromSeries`、`latestCloseFromSeries`、`computedClosePrice`、`computedChange`
 - Electron 在部分 Windows 環境曾出現啟動後 crash
